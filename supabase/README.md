@@ -1,0 +1,86 @@
+# 谷川高科 工业园区管理系统 — 数据库
+
+## 执行顺序
+
+在 Supabase 控制台 → SQL Editor 中，按编号依次执行（一个文件一次，不要合并）：
+
+| # | 文件 | 内容 |
+|---|------|------|
+| 01 | `01_extensions_enums.sql` | 扩展、全部枚举类型 |
+| 02 | `02_core_tables.sql` | 用户档案、园区、园区参数、用户授权、系统设置、审计日志 |
+| 03 | `03_property_tables.sql` | 楼栋、房源、合并拆分台账 |
+| 04 | `04_lease_tables.sql` | 租户/业主、合约、合约房源、免租装修期、阶梯租金 |
+| 05 | `05_billing_tables.sql` | 应收单、账单明细、收款记录、附件 |
+| 06 | `06_energy_tables.sql` | 水电表、抄表记录 |
+| 07 | `07_fn_helpers_units.sql` | 权限判定函数、房号生成、合并 / 拆分 |
+| 08 | `08_fn_billing.sql` | 收款计划生成、状态同步、确认收款 |
+| 09 | `09_fn_energy.sql` | 上期读数自动带入、自动出账、损耗分摊 |
+| 10 | `10_views_units_leases.sql` | 房源状态机视图、账单预警视图、租约卡片视图 |
+| 11 | `11_views_dashboard.sql` | 公司/园区概览、能源统计、预期收入 |
+| 12 | `12_rls_policies.sql` | 行级安全策略、权限矩阵、授权 |
+| 13 | `13_storage_seed.sql` | Storage 桶与策略、初始超级管理员 |
+
+## 执行 13 之前必须做的两件事
+
+1. **Authentication → Users → Add user**，勾选 `Auto Confirm User`，创建总经理账号。
+2. 在 `13_storage_seed.sql` 中把 `v_admin_email` 默认值改成上一步创建的真实邮箱（只改这一处）。
+
+执行完 13 之后，去 **Authentication → Providers → Email** 关闭 `Enable email signups`，
+彻底封掉公开注册。之后所有用户由超级管理员在系统内创建。
+
+如果 13 已经执行过，运行 `supabase/fixes/20261008_sync_admin_profile_email.sql`，
+可将超级管理员档案邮箱与其 Auth 登录邮箱同步。
+
+## 前端调用约定
+
+用户不接触 URL 和 API Key。Netlify Function 从环境变量下发 anon key：
+
+```
+SUPABASE_URL              # Netlify 环境变量，不进前端代码
+SUPABASE_ANON_KEY         # 由 /api/config 下发给浏览器
+SUPABASE_SERVICE_ROLE_KEY # 仅服务端使用，用于创建/删除用户
+```
+
+`anon` 角色对业务表无任何权限，数据访问全部走登录后的 `authenticated` 身份 + RLS。
+创建用户、删除用户、重置密码必须走 Netlify Function（需要 service_role），
+不能在浏览器里调。
+
+## 关键业务函数
+
+```sql
+-- 签约后生成全生命周期收款计划（第二个参数 true = 重算未收款账期）
+select public.generate_lease_schedule('<lease_id>'::uuid, false);
+
+-- 确认收款（金额留空 = 全额）
+select public.confirm_payment('<charge_id>'::uuid, null, current_date,
+                              'bank_transfer', '回单号', '<storage路径>', null);
+
+-- 合并房源（同栋同层、均空置），返回新房源 id
+select public.merge_units(array['<id1>','<id2>']::uuid[]);
+
+-- 拆分房源，子面积汇总须等于拆分前面积
+select public.split_unit('<unit_id>'::uuid,
+  '[{"usable_area":100,"shared_area":20},{"usable_area":80,"shared_area":16}]'::jsonb);
+
+-- 水电损耗分摊（按园区+月份+表类型，抄表录完后执行一次）
+select public.allocate_energy_loss('<park_id>'::uuid, date_trunc('month',current_date)::date, 'water');
+```
+
+## 计算规则备忘
+
+- **租金**：`Σ 每自然月(计租面积 × 元/㎡/天 × 该月计费天数)`，按自然月实际天数
+- **物业费**：`Σ 每自然月(计租面积 × 元/㎡/月 × 该月计费天数 ÷ 该月自然天数)`
+- **应交日**：账期首日 − `leases.due_advance_days`，随租约起始日滚动，非固定每月 1 日
+- **逾期天数**：`current_date − due_date`，次日起算（当天为 0）
+- **预警等级**：0 正常 / 1 七日内到期 / 2 逾期 1–6 天 / 3 逾期 ≥7 天（警示红）
+- **免租与装修期**：起止自由设定、可重叠、可多段，`waive_rent` 与 `waive_fee` 分别控制
+  是否减免租金和物业费；重叠天数已去重，不会重复扣减
+- **房源编号**：栋号 + 层(2位) + 序号(2位)，地下层加 `B`，如 `A10305`、`A1B0102`。
+  序号取同栋同层历史最大值 +1，注销编号不复用
+- **已售物业**：作为 `lease_kind='ownership'` 的合约管理，无租金，物业费与水电费的
+  出账、逾期、收款确认与租赁物业完全一致
+
+## 未验证事项
+
+本机无 Postgres 与 Docker，脚本未经实际执行验证。在 Supabase 上按序执行时若某段报错，
+把报错信息发我，我定位修正。建议先在一个测试项目里跑一遍。
