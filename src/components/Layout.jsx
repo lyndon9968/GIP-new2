@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useState, useRef } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { usePageCache } from '../lib/PageCache'
 import { useAuth } from '../lib/AuthContext'
 import { ROLE_LABEL } from '../lib/format'
 import { getAppName } from '../lib/supabase'
@@ -20,11 +21,29 @@ const TITLES = {
   '/settings': '系统设置',
 }
 
-export default function Layout() {
-  const { profile, signOut } = useAuth()
+export default function Layout({ children }) {
+  const { profile, signOut, reload } = useAuth()
+  const { refresh, busy } = usePageCache()
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+  const refreshingRef = useRef(false)
   const [drawer, setDrawer] = useState(false)
   const loc = useLocation()
+  const path = loc.pathname.replace(/\/$/, '') || '/'
+  const pageBusy = refreshing || busy[path]
   const title = TITLES[loc.pathname] || '园区管理'
+  const refreshCurrent = async () => {
+    if (pageBusy || refreshingRef.current) return
+    refreshingRef.current = true
+    setRefreshing(true); setRefreshError('')
+    try {
+      // Revalidate park/role access before refreshing the current page.
+      await reload()
+      refresh(path)
+    } catch (ex) {
+      setRefreshError(`刷新失败：${ex.message}`)
+    } finally { refreshingRef.current = false; setRefreshing(false) }
+  }
 
   const nav = (
     <nav onClick={() => setDrawer(false)}>
@@ -59,9 +78,14 @@ export default function Layout() {
         <header className="topbar">
           <button className="hamburger" onClick={() => setDrawer(true)} aria-label="打开菜单">☰</button>
           <h1>{title}</h1>
+          <span className="hint page-cache-hint">切换页面保留数据</span>
+          <button className="btn sm" onClick={refreshCurrent} disabled={pageBusy}>
+            {pageBusy ? '刷新中…' : '刷新'}
+          </button>
         </header>
         <div className="content">
-          <Outlet />
+          {refreshError && <div className="err" role="alert">{refreshError}</div>}
+          {children}
         </div>
       </div>
 

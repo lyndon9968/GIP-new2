@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useManualRefresh } from '../lib/PageCache'
 import { sb, callApi } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import Modal, { ConfirmDialog } from '../components/Modal'
@@ -13,20 +14,30 @@ export default function UsersPanel() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [dlg, setDlg] = useState(null)
+  const requestId = useRef(0)
 
   const load = async () => {
-    setLoading(true)
-    const [u, g] = await Promise.all([
-      sb().from('profiles').select('*').order('role').order('full_name'),
-      sb().from('user_parks').select('user_id, park_id'),
-    ])
-    if (u.error) setErr(u.error.message)
-    setUsers(u.data || [])
-    setGrants(g.data || [])
-    setLoading(false)
+    const request = ++requestId.current
+    setLoading(true); setErr('')
+    try {
+      const [u, g] = await Promise.all([
+        sb().from('profiles').select('*').order('role').order('full_name'),
+        sb().from('user_parks').select('user_id, park_id'),
+      ])
+      if (request !== requestId.current) return
+      if (u.error) throw new Error(u.error.message)
+      if (g.error) throw new Error(g.error.message)
+      setUsers(u.data || [])
+      setGrants(g.data || [])
+    } catch (ex) {
+      if (request === requestId.current) setErr(ex.message)
+    } finally {
+      if (request === requestId.current) setLoading(false)
+    }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); return () => { ++requestId.current } }, [])
+  useManualRefresh(load, loading)
 
   const parksOf = (uid) => grants.filter((g) => g.user_id === uid)
     .map((g) => parks.find((p) => p.id === g.park_id)?.name)

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { sb } from './supabase'
 
 const AuthCtx = createContext(null)
@@ -9,30 +9,27 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [parks, setParks] = useState([])
   const [loading, setLoading] = useState(true)
+  const currentUser = useRef(null)
+  const profileRequest = useRef(0)
 
   const loadProfile = useCallback(async (uid) => {
+    const request = ++profileRequest.current
     if (!uid) {
       setProfile(null)
       setParks([])
       return
     }
-    const { data: p } = await sb()
-      .from('profiles')
-      .select('id, full_name, email, phone, role, is_active, must_change_pwd')
-      .eq('id', uid)
-      .single()
-
-    setProfile(p || null)
-
     // RLS 已按授权过滤，super_admin 自然拿到全部园区
-    const { data: pk } = await sb()
-      .from('parks')
-      .select('id, code, name, city')
-      .eq('is_active', true)
-      .order('sort_order')
-      .order('code')
-
-    setParks(pk || [])
+    const [p, pk] = await Promise.all([
+      sb().from('profiles').select('id, full_name, email, phone, role, is_active, must_change_pwd').eq('id', uid).single(),
+      sb().from('parks').select('id, code, name, city').eq('is_active', true).order('sort_order').order('code'),
+    ])
+    if (request !== profileRequest.current || currentUser.current !== uid) return null
+    if (p.error) throw new Error(p.error.message)
+    if (pk.error) throw new Error(pk.error.message)
+    setProfile(p.data || null)
+    setParks(pk.data || [])
+    return p.data
   }, [])
 
   useEffect(() => {
@@ -40,20 +37,32 @@ export function AuthProvider({ children }) {
     let pendingTimer
     let authEventId = 0
 
-    const { data: sub } = sb().auth.onAuthStateChange((_evt, s) => {
+    const { data: sub } = sb().auth.onAuthStateChange((evt, s) => {
       if (!alive) return
+      const uid = s?.user?.id || null
+      const sameUser = uid && uid === currentUser.current
+      setSession(s)
+      // Supabase may emit SIGNED_IN on tab focus and TOKEN_REFRESHED regularly.
+      // Neither event should tear down pages or discard data/drafts for this user.
+      if (sameUser && ['SIGNED_IN', 'TOKEN_REFRESHED'].includes(evt)) return
       const eventId = ++authEventId
       window.clearTimeout(pendingTimer)
-      setSession(s)
-      setLoading(true)
+      currentUser.current = uid
+      if (!sameUser) {
+        setProfile(null); setParks([])
+        setLoading(!!uid)
+      }
+      if (!uid) { ++profileRequest.current; return }
 
       // Do not call Supabase again inside onAuthStateChange. Auth callbacks run
       // under the auth lock; defer profile queries until this callback returns.
       pendingTimer = window.setTimeout(() => {
-        loadProfile(s?.user?.id)
+        loadProfile(uid)
           .catch(() => {
-            setProfile(null)
-            setParks([])
+            if (alive && eventId === authEventId && currentUser.current === uid) {
+              setProfile(null)
+              setParks([])
+            }
           })
           .finally(() => {
             if (alive && eventId === authEventId) setLoading(false)
@@ -63,6 +72,7 @@ export function AuthProvider({ children }) {
 
     return () => {
       alive = false
+      ++profileRequest.current
       window.clearTimeout(pendingTimer)
       sub?.subscription?.unsubscribe()
     }
@@ -99,9 +109,14 @@ export function AuthProvider({ children }) {
       if (error) throw new Error(mapAuthError(error.message))
     },
     signOut: async () => {
-      await sb().auth.signOut()
+      const { error } = await sb().auth.signOut()
+      if (error) throw new Error(error.message)
+      currentUser.current = null
+      ++profileRequest.current
+      setSession(null)
       setProfile(null)
       setParks([])
+      try { sessionStorage.removeItem('gip-new-park-draft') } catch { /* unavailable storage */ }
     },
     changePassword: async (password) => {
       const { error } = await sb().auth.updateUser({ password })

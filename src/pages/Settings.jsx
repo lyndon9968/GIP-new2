@@ -3,6 +3,7 @@ import { useAuth } from '../lib/AuthContext'
 import UsersPanel from './SettingsUsers'
 import ParksPanel from './SettingsParks'
 import MyAccount from './SettingsAccount'
+import { CachedPage } from '../lib/PageCache'
 
 export default function Settings() {
   const { isSuper, can } = useAuth()
@@ -21,9 +22,9 @@ export default function Settings() {
         ))}
       </div>
 
-      {tab === 'users' && <UsersPanel />}
-      {tab === 'parks' && <ParksPanel />}
-      {tab === 'me' && <MyAccount />}
+      {isSuper && <CachedPage active={tab === 'users'}><UsersPanel /></CachedPage>}
+      {can.editPark && <CachedPage active={tab === 'parks'}><ParksPanel /></CachedPage>}
+      <CachedPage active={tab === 'me'}><MyAccount /></CachedPage>
     </>
   )
 }

@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useManualRefresh } from '../lib/PageCache'
 import { sb } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { ParkPicker } from '../components/Layout'
@@ -17,6 +18,7 @@ export default function Leases() {
   const [onlyAlert, setOnlyAlert] = useState(false)
   const [kw, setKw] = useState('')
   const [dlg, setDlg] = useState(null)
+  const requestId = useRef(0)
 
   useEffect(() => {
     if (!parkId && parks.length) setParkId(parks[0].id)
@@ -24,19 +26,27 @@ export default function Leases() {
 
   const load = useCallback(async () => {
     if (!parkId) return
+    const request = ++requestId.current
     setLoading(true); setErr('')
-    const { data, error } = await sb()
-      .from('v_lease_cards').select('*')
-      .eq('park_id', parkId)
-      .in('status', ['draft', 'active', 'expired'])
-      .order('max_alert_level', { ascending: false })
-      .order('party_name')
-    if (error) setErr(error.message)
-    setCards(data || [])
-    setLoading(false)
+    try {
+      const { data, error } = await sb()
+        .from('v_lease_cards').select('*')
+        .eq('park_id', parkId)
+        .in('status', ['draft', 'active', 'expired'])
+        .order('max_alert_level', { ascending: false })
+        .order('party_name')
+      if (request !== requestId.current) return
+      if (error) throw new Error(error.message)
+      setCards(data || [])
+    } catch (ex) {
+      if (request === requestId.current) setErr(ex.message)
+    } finally {
+      if (request === requestId.current) setLoading(false)
+    }
   }, [parkId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); return () => { ++requestId.current } }, [load])
+  useManualRefresh(load, loading)
 
   const shown = useMemo(() => cards.filter((c) => {
     if (c.lease_kind !== tab) return false

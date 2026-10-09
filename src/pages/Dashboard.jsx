@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { useManualRefresh } from '../lib/PageCache'
 import { sb } from '../lib/supabase'
 import { area, moneyShort, money, num, pct } from '../lib/format'
 import { DonutChart, BarChart, monthSeries, lastMonths } from '../components/Charts'
@@ -10,28 +11,31 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
 
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        const [c, p, e] = await Promise.all([
-          sb().from('v_company_overview').select('*').maybeSingle(),
-          sb().from('v_park_overview').select('*').order('sort_order').order('code'),
-          sb().from('v_expected_income').select('*').in('charge_type', ['rent', 'property_fee']),
-        ])
-        if (!alive) return
-        if (c.error) throw new Error(c.error.message)
-        setCo(c.data)
-        setParks(p.data || [])
-        setExpect(e.data || [])
-      } catch (ex) {
-        if (alive) setErr(ex.message)
-      } finally {
-        if (alive) setLoading(false)
-      }
-    })()
-    return () => { alive = false }
+  const requestId = useRef(0)
+  const load = useCallback(async () => {
+    const request = ++requestId.current
+    setLoading(true); setErr('')
+    try {
+      const [c, p, e] = await Promise.all([
+        sb().from('v_company_overview').select('*').maybeSingle(),
+        sb().from('v_park_overview').select('*').order('sort_order').order('code'),
+        sb().from('v_expected_income').select('*').in('charge_type', ['rent', 'property_fee']),
+      ])
+      if (request !== requestId.current) return
+      if (c.error) throw new Error(c.error.message)
+      if (p.error) throw new Error(p.error.message)
+      if (e.error) throw new Error(e.error.message)
+      setCo(c.data)
+      setParks(p.data || [])
+      setExpect(e.data || [])
+    } catch (ex) {
+      if (request === requestId.current) setErr(ex.message)
+    } finally {
+      if (request === requestId.current) setLoading(false)
+    }
   }, [])
+  useEffect(() => { load(); return () => { ++requestId.current } }, [load])
+  useManualRefresh(load, loading)
 
   if (loading) return <div className="loading">加载中…</div>
   if (err) return <div className="err">{err}</div>

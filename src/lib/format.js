@@ -89,3 +89,25 @@ export function floorLabel(f) {
   const n = Number(f)
   return n < 0 ? `B${Math.abs(n)}层` : `${n}层`
 }
+
+export function unitLocations(unit) {
+  return unit.locations?.length ? unit.locations : [{
+    building_id: unit.building_id, building_code: unit.building_code, floor: unit.floor,
+  }]
+}
+
+export function unitBuildingLabel(unit) {
+  return [...new Set(unitLocations(unit).map((p) => p.building_code || unit.building_code || '—'))].join('、')
+}
+
+export function unitFloorLabel(unit) {
+  return [...new Set(unitLocations(unit).map((p) => Number(p.floor)))].sort((a, b) => a - b).map(floorLabel).join('、')
+}
+
+export function unitLocationLabel(unit) {
+  return unitLocations(unit).map((p) => `${p.building_code || unit.building_code || '—'}栋 ${floorLabel(p.floor)}`).join('、')
+}
+
+export function unitInBuilding(unit, buildingId) {
+  return unitLocations(unit).some((p) => p.building_id === buildingId)
+}

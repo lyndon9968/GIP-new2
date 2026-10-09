@@ -1,7 +1,10 @@
 import { useEffect } from 'react'
+import { usePageActivity } from '../lib/PageCache'
 
 export default function Modal({ title, children, onClose, footer, wide = false }) {
+  const active = usePageActivity()
   useEffect(() => {
+    if (!active) return
     const onKey = (e) => e.key === 'Escape' && onClose?.()
     document.addEventListener('keydown', onKey)
     const prev = document.body.style.overflow
@@ -10,8 +13,9 @@ export default function Modal({ title, children, onClose, footer, wide = false }
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = prev
     }
-  }, [onClose])
+  }, [onClose, active])
 
+  if (!active) return null
   return (
     <div className="mask" onClick={(e) => e.target === e.currentTarget && onClose?.()}>
       <div className={`modal${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>

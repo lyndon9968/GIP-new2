@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { sb } from '../lib/supabase'
 import Modal from '../components/Modal'
-import { area, floorLabel, today, STATUS_LABEL } from '../lib/format'
+import { area, today, STATUS_LABEL, unitBuildingLabel, unitFloorLabel, unitLocationLabel } from '../lib/format'
 
 const CYCLES = [
   { v: 1, t: '月付' }, { v: 3, t: '季付' },
@@ -285,9 +285,9 @@ export default function LeaseForm({ parkId, kind, leaseId, onClose, onDone }) {
                                disabled={occupied} onChange={() => toggleUnit(u)}
                                aria-label={`选择 ${u.unit_no}`} />
                       </td>
-                      <td>{u.building_code}</td>
-                      <td>{floorLabel(u.floor)}</td>
-                      <td><strong>{u.unit_no}</strong></td>
+                      <td>{unitBuildingLabel(u)}</td>
+                      <td>{unitFloorLabel(u)}</td>
+                      <td><strong>{u.unit_no}</strong><div className="hint">{unitLocationLabel(u)}</div></td>
                       <td className="num">{area(u.area)}</td>
                       <td>
                         <span className={`tag ${u.display_status}`}>{STATUS_LABEL[u.display_status]}</span>

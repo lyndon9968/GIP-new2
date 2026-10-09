@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useManualRefresh } from '../lib/PageCache'
 import { sb } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { ParkPicker } from '../components/Layout'
@@ -19,6 +20,7 @@ export default function Energy() {
   const [msg, setMsg] = useState('')
   const [dlg, setDlg] = useState(null)
   const [group, setGroup] = useState('tenant')  // tenant | public
+  const requestId = useRef(0)
 
   useEffect(() => {
     if (!parkId && parks.length) setParkId(parks[0].id)
@@ -26,6 +28,7 @@ export default function Energy() {
 
   const load = useCallback(async () => {
     if (!parkId) return
+    const request = ++requestId.current
     setLoading(true); setErr('')
     try {
       const [m, r, s] = await Promise.all([
@@ -35,18 +38,22 @@ export default function Energy() {
         sb().from('meter_readings').select('*').eq('park_id', parkId).eq('bill_month', month),
         sb().from('v_energy_monthly').select('*').eq('park_id', parkId),
       ])
+      if (request !== requestId.current) return
       if (m.error) throw new Error(m.error.message)
+      if (r.error) throw new Error(r.error.message)
+      if (s.error) throw new Error(s.error.message)
       setMeters(m.data || [])
       setReadings(r.data || [])
       setSeries(s.data || [])
     } catch (ex) {
-      setErr(ex.message)
+      if (request === requestId.current) setErr(ex.message)
     } finally {
-      setLoading(false)
+      if (request === requestId.current) setLoading(false)
     }
   }, [parkId, month])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); return () => { ++requestId.current } }, [load])
+  useManualRefresh(load, loading)
 
   // 按租约分组，一个租户一张卡；公共表单独一组
   const groups = useMemo(() => {
@@ -61,16 +68,19 @@ export default function Energy() {
 
   const [leaseInfo, setLeaseInfo] = useState({})
   useEffect(() => {
+    let alive = true
     const ids = [...new Set(meters.map((m) => m.lease_id).filter(Boolean))]
     if (!ids.length) return setLeaseInfo({})
     sb().from('v_lease_cards')
       .select('lease_id, party_name, contract_no, unit_list, water_price, electricity_price, total_area')
       .in('lease_id', ids)
       .then(({ data }) => {
+        if (!alive) return
         const o = {}
         for (const x of data || []) o[x.lease_id] = x
         setLeaseInfo(o)
       })
+    return () => { alive = false }
   }, [meters])
 
   const months = lastMonths(6)

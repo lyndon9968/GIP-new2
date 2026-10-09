@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { sb } from '../lib/supabase'
 import Modal, { ConfirmDialog } from '../components/Modal'
-import { floorLabel } from '../lib/format'
+import { unitInBuilding, unitLocationLabel } from '../lib/format'
 
 const BLANK = {
   meter_no: '', meter_type: 'water', building_id: '', unit_id: '', lease_id: '',
@@ -24,7 +24,7 @@ export default function MeterDialog({ parkId, onClose, onDone }) {
     const [m, b, u, l] = await Promise.all([
       sb().from('meters').select('*').eq('park_id', parkId).order('meter_type').order('meter_no'),
       sb().from('buildings').select('id, code').eq('park_id', parkId).order('code'),
-      sb().from('units').select('id, unit_no, floor, building_id').eq('park_id', parkId)
+      sb().from('v_unit_status').select('id, unit_no, floor, building_id, building_code, locations').eq('park_id', parkId)
         .neq('status', 'voided').order('unit_no'),
       sb().from('v_lease_cards').select('lease_id, party_name, contract_no')
         .eq('park_id', parkId).in('status', ['active', 'draft']),
@@ -90,7 +90,7 @@ export default function MeterDialog({ parkId, onClose, onDone }) {
   }
 
   const unitOptions = f.building_id
-    ? units.filter((u) => u.building_id === f.building_id)
+    ? units.filter((u) => unitInBuilding(u, f.building_id))
     : units
 
   return (
@@ -156,7 +156,7 @@ export default function MeterDialog({ parkId, onClose, onDone }) {
           <select value={f.unit_id} onChange={(e) => setF({ ...f, unit_id: e.target.value })}>
             <option value="">—</option>
             {unitOptions.map((u) => (
-              <option key={u.id} value={u.id}>{u.unit_no}（{floorLabel(u.floor)}）</option>
+              <option key={u.id} value={u.id}>{u.unit_no}（{unitLocationLabel(u)}）</option>
             ))}
           </select>
         </div>

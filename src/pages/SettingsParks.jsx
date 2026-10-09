@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useManualRefresh } from '../lib/PageCache'
 import { sb } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import Modal from '../components/Modal'
@@ -35,22 +36,32 @@ export default function ParksPanel() {
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [dlg, setDlg] = useState(() => readParkDraft() ? { type: 'park', draft: true } : null)
+  const requestId = useRef(0)
 
   const load = async () => {
-    setLoading(true)
-    const [p, s] = await Promise.all([
-      sb().from('parks').select('*').order('sort_order').order('code'),
-      sb().from('park_settings').select('*'),
-    ])
-    if (p.error) setErr(p.error.message)
-    setList(p.data || [])
-    const o = {}
-    for (const x of s.data || []) o[x.park_id] = x
-    setSettings(o)
-    setLoading(false)
+    const request = ++requestId.current
+    setLoading(true); setErr('')
+    try {
+      const [p, s] = await Promise.all([
+        sb().from('parks').select('*').order('sort_order').order('code'),
+        sb().from('park_settings').select('*'),
+      ])
+      if (request !== requestId.current) return
+      if (p.error) throw new Error(p.error.message)
+      if (s.error) throw new Error(s.error.message)
+      setList(p.data || [])
+      const o = {}
+      for (const x of s.data || []) o[x.park_id] = x
+      setSettings(o)
+    } catch (ex) {
+      if (request === requestId.current) setErr(ex.message)
+    } finally {
+      if (request === requestId.current) setLoading(false)
+    }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); return () => { ++requestId.current } }, [])
+  useManualRefresh(load, loading)
 
   const done = (m) => {
     clearParkDraft()

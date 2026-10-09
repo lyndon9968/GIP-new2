@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { sb } from '../lib/supabase'
+import { useManualRefresh } from '../lib/PageCache'
 import { useAuth } from '../lib/AuthContext'
 import { ParkPicker } from '../components/Layout'
 import Modal, { ConfirmDialog } from '../components/Modal'
-import { area, STATUS_LABEL, PURPOSE_LABEL, floorLabel } from '../lib/format'
+import { area, STATUS_LABEL, PURPOSE_LABEL, floorLabel, unitLocations,
+  unitBuildingLabel, unitFloorLabel, unitLocationLabel, unitInBuilding } from '../lib/format'
 
 export default function Units() {
   const { parks, can } = useAuth()
@@ -16,6 +18,7 @@ export default function Units() {
   const [sel, setSel] = useState([])
   const [filter, setFilter] = useState({ building: '', status: '', kw: '' })
   const [dlg, setDlg] = useState(null) // {type, payload}
+  const requestId = useRef(0)
 
   useEffect(() => {
     if (!parkId && parks.length) setParkId(parks[0].id)
@@ -23,6 +26,7 @@ export default function Units() {
 
   const load = useCallback(async () => {
     if (!parkId) return
+    const request = ++requestId.current
     setLoading(true)
     setErr('')
     try {
@@ -31,31 +35,34 @@ export default function Units() {
           .order('building_code').order('floor').order('unit_no'),
         sb().from('buildings').select('*').eq('park_id', parkId).order('sort_order').order('code'),
       ])
+      if (request !== requestId.current) return
       if (u.error) throw new Error(u.error.message)
       if (b.error) throw new Error(b.error.message)
       setRows(u.data || [])
       setBuildings(b.data || [])
       setSel([])
     } catch (ex) {
-      setErr(ex.message)
+      if (request === requestId.current) setErr(ex.message)
     } finally {
-      setLoading(false)
+      if (request === requestId.current) setLoading(false)
     }
   }, [parkId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); return () => { ++requestId.current } }, [load])
+  useManualRefresh(load, loading)
 
   const shown = useMemo(() => rows.filter((r) => {
-    if (filter.building && r.building_id !== filter.building) return false
+    if (r.status === 'voided' && filter.status !== 'voided') return false
+    if (filter.building && !unitInBuilding(r, filter.building)) return false
     if (filter.status && r.display_status !== filter.status) return false
     if (filter.kw) {
       const k = filter.kw.toLowerCase()
-      if (!`${r.unit_no} ${r.party_name || ''}`.toLowerCase().includes(k)) return false
+      if (!`${r.unit_no} ${r.party_name || ''} ${unitLocationLabel(r)}`.toLowerCase().includes(k)) return false
     }
     return true
   }), [rows, filter])
 
-  const selRows = rows.filter((r) => sel.includes(r.id))
+  const selRows = [...new Map(rows.filter((r) => sel.includes(r.id)).map((r) => [r.id, r])).values()]
   const done = (m) => { setMsg(m); setDlg(null); load(); setTimeout(() => setMsg(''), 4000) }
 
   return (
@@ -176,9 +183,9 @@ function UnitTable({ rows, sel, setSel, canSelect, canEdit, onEdit, onDelete }) 
                        onChange={() => toggle(r.id)} aria-label={`选择 ${r.unit_no}`} />
               </td>
             ) : null}
-            <td>{r.building_code}</td>
-            <td>{floorLabel(r.floor)}</td>
-            <td><strong>{r.unit_no}</strong></td>
+            <td>{unitBuildingLabel(r)}</td>
+            <td>{unitFloorLabel(r)}</td>
+            <td><strong>{r.unit_no}</strong>{unitLocations(r).length > 1 && <div className="hint">{unitLocationLabel(r)}</div>}</td>
             <td className="num">{area(r.area)}</td>
             <td className="num">{area(r.usable_area)}</td>
             <td className="num">{area(r.shared_area)}</td>
@@ -294,9 +301,21 @@ function BuildingDialog({ parkId, buildings, onRefresh, onClose, onDone }) {
 
 function UnitDialog({ parkId, buildings, row, onClose, onDone }) {
   const editing = !!row
+  const originalLocations = row ? unitLocations(row) : []
+  const composite = new Set(originalLocations.map((x) => x.building_id)).size > 1
+  const originalBuilding = buildings.find((b) => b.id === row?.building_id)
+  const originalWholeFloors = [
+    ...Array.from({ length: Math.max(0, Number(originalBuilding?.floors_below) || 0) }, (_, i) => -i - 1),
+    ...Array.from({ length: Math.max(1, Number(originalBuilding?.floors_above) || 1) }, (_, i) => i + 1),
+  ]
+  const isWhole = !composite && originalLocations.length > 1
+    && originalLocations.length === originalWholeFloors.length
+    && originalWholeFloors.every((floor) => originalLocations.some((x) => Number(x.floor) === floor))
   const [f, setF] = useState({
     building_id: row?.building_id || buildings[0]?.id || '',
     floor: row?.floor ?? 1,
+    scope: composite ? 'composite' : isWhole ? 'whole' : originalLocations.length > 1 ? 'multi' : 'single',
+    floors: originalLocations.map((x) => Number(x.floor)),
     usable_area: row?.usable_area ?? '',
     shared_area: row?.shared_area ?? '',
     purpose: row?.purpose || 'rent_or_sale',
@@ -306,42 +325,59 @@ function UnitDialog({ parkId, buildings, row, onClose, onDone }) {
   const [preview, setPreview] = useState(row?.unit_no || '')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
+  const building = buildings.find((b) => b.id === f.building_id)
+  const availableFloors = [...new Set([
+    ...Array.from({ length: Math.max(0, Number(building?.floors_below) || 0) }, (_, i) => -i - 1),
+    ...Array.from({ length: Math.max(1, Number(building?.floors_above) || 1) }, (_, i) => i + 1),
+    ...originalLocations.filter((x) => x.building_id === f.building_id).map((x) => Number(x.floor)),
+  ])].sort((a, b) => a - b)
+  const selectedFloors = f.scope === 'whole' ? availableFloors : f.scope === 'multi' ? f.floors : [Number(f.floor)]
+  const anchorFloor = editing ? row.floor : selectedFloors.length ? Math.min(...selectedFloors) : 1
+  const locations = composite ? originalLocations.map(({ building_id, floor }) => ({ building_id, floor }))
+    : selectedFloors.map((floor) => ({ building_id: f.building_id, floor }))
 
   // 新增时预览系统将生成的房号
   useEffect(() => {
     if (editing || !f.building_id) return
     let alive = true
-    sb().rpc('next_unit_no', { p_building: f.building_id, p_floor: Number(f.floor) || 1 })
+    sb().rpc('next_unit_no', { p_building: f.building_id, p_floor: anchorFloor })
       .then(({ data }) => {
         if (alive) setPreview(Array.isArray(data) ? data[0]?.unit_no || '' : data?.unit_no || '')
       })
     return () => { alive = false }
-  }, [editing, f.building_id, f.floor])
+  }, [editing, f.building_id, anchorFloor])
 
   const save = async () => {
+    if (submitting.current) return
     setErr('')
     if (!f.building_id) return setErr('请选择楼栋')
     const ua = Number(f.usable_area) || 0
     const sa = Number(f.shared_area) || 0
-    if (ua <= 0) return setErr('使用面积必须大于 0')
+    if (!Number.isFinite(ua) || ua <= 0 || !Number.isFinite(sa) || sa < 0) return setErr('使用面积必须大于 0，公摊面积不能为负数')
+    if (!locations.length || locations.some((x) => !Number.isInteger(x.floor))) return setErr('请选择有效的覆盖楼层')
+    if (!locations.some((x) => x.building_id === f.building_id && x.floor === anchorFloor)) return setErr('覆盖楼层必须保留原房号所属楼层')
 
+    submitting.current = true
     setBusy(true)
     try {
       if (editing) {
         const { error } = await sb().from('units').update({
           usable_area: ua, shared_area: sa, purpose: f.purpose,
           status: f.status, remark: f.remark || null,
+          locations,
         }).eq('id', row.id)
         if (error) throw new Error(error.message)
       } else {
         const { data: nn, error: nErr } = await sb().rpc('next_unit_no', {
-          p_building: f.building_id, p_floor: Number(f.floor) || 1,
+          p_building: f.building_id, p_floor: anchorFloor,
         })
         if (nErr) throw new Error(nErr.message)
         const gen = Array.isArray(nn) ? nn[0] : nn
         const { error } = await sb().from('units').insert({
           park_id: parkId, building_id: f.building_id,
-          unit_no: gen.unit_no, floor: Number(f.floor) || 1, seq: gen.seq,
+          unit_no: gen.unit_no, floor: anchorFloor, seq: gen.seq,
+          locations,
           usable_area: ua, shared_area: sa, purpose: f.purpose,
           status: f.status, remark: f.remark || null,
         })
@@ -351,6 +387,7 @@ function UnitDialog({ parkId, buildings, row, onClose, onDone }) {
     } catch (ex) {
       setErr(ex.message)
     } finally {
+      submitting.current = false
       setBusy(false)
     }
   }
@@ -368,21 +405,44 @@ function UnitDialog({ parkId, buildings, row, onClose, onDone }) {
         <div>
           <label className="f">楼栋 *</label>
           <select value={f.building_id} disabled={editing}
-                  onChange={(e) => setF({ ...f, building_id: e.target.value })}>
+                  onChange={(e) => setF({ ...f, building_id: e.target.value, floors: [], floor: 1 })}>
             {buildings.map((b) => <option key={b.id} value={b.id}>{b.code} 栋</option>)}
           </select>
         </div>
         <div>
-          <label className="f">层 *</label>
-          <input type="number" value={f.floor} disabled={editing}
-                 onChange={(e) => setF({ ...f, floor: e.target.value })} />
-          <div className="hint">地下层填负数，如 -1</div>
+          <label className="f" htmlFor="unit-scope">房源范围 *</label>
+          <select id="unit-scope" value={f.scope} disabled={composite}
+                  onChange={(e) => setF({ ...f, scope: e.target.value, floors: f.floors.length ? f.floors : [Number(f.floor)] })}>
+            <option value="single">单层</option><option value="multi">多层</option><option value="whole">整栋</option>
+            {composite && <option value="composite">跨栋组合房源</option>}
+          </select>
         </div>
         <div>
           <label className="f">房号</label>
           <input value={preview} readOnly />
           <div className="hint">{editing ? '房号不可修改' : '由系统按编号规则生成'}</div>
         </div>
+      </div>
+
+      <div className="fgroup mt">
+        {composite ? <div className="hint">覆盖位置：{unitLocationLabel(row)}。跨栋位置由合并／拆分操作维护。</div>
+          : f.scope === 'single' ? <>
+            <label className="f" htmlFor="unit-floor">层 *</label>
+            <input id="unit-floor" type="number" value={f.floor} disabled={editing}
+                   onChange={(e) => setF({ ...f, floor: e.target.value })} />
+            <div className="hint">地下层填负数，如 -1</div>
+          </> : <>
+            <label className="f">覆盖楼层 *</label>
+            <div className="row" style={{ flexWrap: 'wrap' }}>
+              {availableFloors.map((floor) => <label className="row" key={floor} style={{ gap: 6 }}>
+                <input type="checkbox" style={{ width: 16 }} checked={selectedFloors.includes(floor)}
+                       disabled={f.scope === 'whole' || (editing && floor === row.floor)}
+                       onChange={(e) => setF({ ...f, floors: e.target.checked ? [...f.floors, floor] : f.floors.filter((x) => x !== floor) })} />
+                {floorLabel(floor)}
+              </label>)}
+            </div>
+            <div className="hint">整栋包含楼栋登记的全部地上／地下楼层；下方填写整套房源的总面积，不乘以层数。</div>
+          </>}
       </div>
 
       <div className="frow mt">
@@ -441,24 +501,34 @@ function MergeDialog({ rows, onClose, onDone }) {
   const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
 
-  const sameFloor = new Set(rows.map((r) => `${r.building_id}#${r.floor}`)).size === 1
-  const notVacant = rows.filter((r) => r.display_status !== 'vacant')
+  const samePark = new Set(rows.map((r) => r.park_id)).size === 1
+  const sameStatus = new Set(rows.map((r) => r.status)).size === 1 && ['vacant', 'leased'].includes(rows[0]?.status)
+  const samePurpose = new Set(rows.map((r) => r.purpose)).size === 1
+  const leaseIds = rows.map((r) => r.lease_id || null)
+  const sameLease = leaseIds.every((id) => id === leaseIds[0])
   const ua = rows.reduce((s, r) => s + Number(r.usable_area || 0), 0)
   const sa = rows.reduce((s, r) => s + Number(r.shared_area || 0), 0)
-  const blocked = !sameFloor || notVacant.length > 0
+  const blocked = rows.length < 2 || !samePark || !sameStatus || !samePurpose || !sameLease
 
   const run = async () => {
+    if (blocked || submitting.current) return
+    submitting.current = true
     setBusy(true); setErr('')
-    const { data, error } = await sb().rpc('merge_units', {
-      p_unit_ids: rows.map((r) => r.id),
-      p_purpose: null,
-      p_reason: reason || null,
-    })
-    setBusy(false)
-    if (error) return setErr(error.message)
-    const { data: nu } = await sb().from('units').select('unit_no').eq('id', data).single()
-    onDone(nu?.unit_no || '')
+    try {
+      const { data, error } = await sb().rpc('merge_units', {
+        p_unit_ids: rows.map((r) => r.id), p_purpose: null, p_reason: reason || null,
+      })
+      if (error) throw new Error(error.message)
+      const { data: nu } = await sb().from('units').select('unit_no').eq('id', data).single()
+      onDone(nu?.unit_no || data)
+    } catch (ex) {
+      setErr(ex.message)
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
   }
 
   return (
@@ -479,7 +549,7 @@ function MergeDialog({ rows, onClose, onDone }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td>{r.building_code}</td><td>{floorLabel(r.floor)}</td><td>{r.unit_no}</td>
+                <td>{unitBuildingLabel(r)}</td><td>{unitFloorLabel(r)}</td><td>{r.unit_no}<div className="hint">{unitLocationLabel(r)}</div></td>
                 <td className="num">{area(r.usable_area)}</td>
                 <td className="num">{area(r.shared_area)}</td>
                 <td><span className={`tag ${r.display_status}`}>{STATUS_LABEL[r.display_status]}</span></td>
@@ -495,12 +565,10 @@ function MergeDialog({ rows, onClose, onDone }) {
         </table>
       </div>
 
-      {!sameFloor && <div className="err">只能合并同一栋、同一层的房源</div>}
-      {notVacant.length > 0 && (
-        <div className="err">
-          以下房源不是空置状态，无法合并：{notVacant.map((r) => r.unit_no).join('、')}
-        </div>
-      )}
+      {!samePark && <div className="err">只能合并同一园区的房源</div>}
+      {!sameStatus && <div className="err">请选择全部空置或全部已租的房源；已售、预留、已注销及混合状态不能直接合并。</div>}
+      {!samePurpose && <div className="err">请先统一所选房源的经营属性。</div>}
+      {!sameLease && <div className="err">所选房源关联不同租约或混合已签约与未签约房源，不能直接合并。</div>}
 
       <div className="fgroup">
         <label className="f">合并原因</label>
@@ -508,7 +576,8 @@ function MergeDialog({ rows, onClose, onDone }) {
       </div>
 
       <div className="hint">
-        合并后原房号全部注销且不再复用，系统按「栋号 + 层 + 序号」生成新房号。操作留有台账可追溯。
+        支持同园区跨栋、跨层合并。原房号注销且不再复用，新房号按首个覆盖位置的「栋号 + 层 + 序号」生成，列表完整显示所有覆盖位置。
+        同一份租约下的房源合并后保留合同计租面积、收款计划、已收款记录及抄表记录。数据库还会校验草稿租约和表具归属。
       </div>
 
       {err ? <div className="err">{err}</div> : null}
@@ -517,9 +586,12 @@ function MergeDialog({ rows, onClose, onDone }) {
 }
 
 function SplitDialog({ row, onClose, onDone }) {
+  const sourceLocations = unitLocations(row)
+  const locationKey = (x) => `${x.building_id}#${x.floor}`
+  const blankKid = () => ({ usable_area: '', shared_area: '', purpose: row.purpose,
+    locations: sourceLocations.length === 1 ? sourceLocations : [] })
   const [kids, setKids] = useState([
-    { usable_area: '', shared_area: '', purpose: row.purpose },
-    { usable_area: '', shared_area: '', purpose: row.purpose },
+    blankKid(), blankKid(),
   ])
   const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
@@ -530,6 +602,10 @@ function SplitDialog({ row, onClose, onDone }) {
   const du = su - Number(row.usable_area || 0)
   const ds = ss - Number(row.shared_area || 0)
   const okArea = Math.abs(du) <= 0.01 && Math.abs(ds) <= 0.01
+    && kids.every((k) => Number(k.usable_area) > 0 && Number(k.shared_area) >= 0)
+  const selectedLocations = new Set(kids.flatMap((k) => k.locations.map(locationKey)))
+  const okLocations = kids.every((k) => k.locations.length > 0)
+    && sourceLocations.every((x) => selectedLocations.has(locationKey(x)))
 
   const setKid = (i, patch) => setKids(kids.map((k, j) => (j === i ? { ...k, ...patch } : k)))
 
@@ -546,6 +622,7 @@ function SplitDialog({ row, onClose, onDone }) {
   }
 
   const run = async () => {
+    if (busy || !okArea || !okLocations) return
     setBusy(true); setErr('')
     const { data, error } = await sb().rpc('split_unit', {
       p_unit_id: row.id,
@@ -553,6 +630,7 @@ function SplitDialog({ row, onClose, onDone }) {
         usable_area: Number(k.usable_area) || 0,
         shared_area: Number(k.shared_area) || 0,
         purpose: k.purpose,
+        locations: k.locations.map(({ building_id, floor }) => ({ building_id, floor })),
       })),
       p_reason: reason || null,
     })
@@ -565,7 +643,7 @@ function SplitDialog({ row, onClose, onDone }) {
     <Modal title={`拆分房源 ${row.unit_no}`} wide onClose={onClose} footer={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" onClick={run} disabled={busy || !okArea}>
+        <button className="btn primary" onClick={run} disabled={busy || !okArea || !okLocations}>
           {busy ? '处理中…' : '确认拆分'}
         </button>
       </>
@@ -575,6 +653,7 @@ function SplitDialog({ row, onClose, onDone }) {
         <Cell k="拆分前公摊面积" v={`${area(row.shared_area)} ㎡`} />
         <Cell k="拆分前建筑面积" v={`${area(row.area)} ㎡`} />
       </div>
+      <div className="hint mb">拆分前位置：{unitLocationLabel(row)}。各子房源的位置须合计覆盖全部原位置；同层分成多间时可选择同一位置。</div>
 
       {kids.map((k, i) => (
         <div className="frow mb" key={i} style={{ alignItems: 'end' }}>
@@ -598,6 +677,14 @@ function SplitDialog({ row, onClose, onDone }) {
               {Object.entries(PURPOSE_LABEL).map(([kk, v]) => <option key={kk} value={kk}>{v}</option>)}
             </select>
           </div>
+          {sourceLocations.length > 1 && <div style={{ minWidth: 180 }}>
+            <label className="f">覆盖位置 *</label>
+            {sourceLocations.map((x) => <label className="row" key={locationKey(x)} style={{ gap: 6 }}>
+              <input type="checkbox" style={{ width: 16 }} checked={k.locations.some((l) => locationKey(l) === locationKey(x))}
+                     onChange={(e) => setKid(i, { locations: e.target.checked ? [...k.locations, x] : k.locations.filter((l) => locationKey(l) !== locationKey(x)) })} />
+              {x.building_code}栋 {floorLabel(x.floor)}
+            </label>)}
+          </div>}
           <div style={{ flex: '0 0 66px' }}>
             {kids.length > 2 && (
               <button className="btn sm danger" onClick={() => setKids(kids.filter((_, j) => j !== i))}>
@@ -610,7 +697,7 @@ function SplitDialog({ row, onClose, onDone }) {
 
       <div className="row mb">
         <button className="btn sm"
-                onClick={() => setKids([...kids, { usable_area: '', shared_area: '', purpose: row.purpose }])}>
+                onClick={() => setKids([...kids, blankKid()])}>
           + 增加一间
         </button>
         <button className="btn sm" onClick={fillLast}>剩余面积补到最后一间</button>
@@ -621,6 +708,7 @@ function SplitDialog({ row, onClose, onDone }) {
         公摊 {area(ss)} ㎡（差 {ds >= 0 ? '+' : ''}{area(ds)}）
         {okArea ? ' — 校验通过' : ' — 必须与拆分前一致（容差 0.01㎡）'}
       </div>
+      {!okLocations && <div className="err">每个子房源都要选择位置，并覆盖拆分前的全部楼栋和楼层。</div>}
 
       <div className="fgroup mt">
         <label className="f">拆分原因</label>

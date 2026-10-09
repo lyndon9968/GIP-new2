@@ -71,6 +71,8 @@ a { color: var(--brand-2); text-decoration: none; }
   position: sticky; top: 0; z-index: 30; flex-wrap: wrap;
 }
 .topbar h1 { font-size: 17px; flex: 1; min-width: 120px; }
+.page-cache-hint { white-space: nowrap; }
+[hidden] { display: none !important; }
 .content { padding: 18px 20px 40px; flex: 1; }
 
 .mobile-nav { display: none; }
@@ -293,6 +295,7 @@ table.tbl tr.st-voided  { color: #a0a6b0; }
   }
   .topbar { padding: 10px 13px; }
   .topbar h1 { font-size: 16px; }
+  .page-cache-hint { display: none; }
   .content { padding: 13px 13px calc(70px + var(--safe-b)); }
   .kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .kpi { padding: 12px; }

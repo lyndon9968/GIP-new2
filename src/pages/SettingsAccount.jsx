@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { sb } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { ROLE_LABEL } from '../lib/format'
+import { useManualRefresh } from '../lib/PageCache'
 
 // 所有用户都可以在这里改密码和联系方式
 export default function MyAccount() {
@@ -12,6 +13,12 @@ export default function MyAccount() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  useManualRefresh(async () => {
+    try {
+      const fresh = await reload()
+      if (fresh) setInfo({ full_name: fresh.full_name || '', phone: fresh.phone || '' })
+    } catch (ex) { setErr(ex.message) }
+  })
 
   const savePwd = async () => {
     setErr(''); setMsg('')

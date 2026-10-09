@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, useLocation } from 'react-router-dom'
+import { CachedPage, PageCacheProvider } from './lib/PageCache'
 import { AuthProvider, useAuth } from './lib/AuthContext'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -10,7 +11,7 @@ import Energy from './pages/Energy'
 import Settings from './pages/Settings'
 
 function Gate() {
-  const { session, profile, loading, signOut } = useAuth()
+  const { session, profile, parks, loading, signOut } = useAuth()
 
   if (loading) return <div className="loading" style={{ paddingTop: 80 }}>加载中…</div>
   if (!session) return <Login />
@@ -44,18 +45,27 @@ function Gate() {
   }
   if (profile.must_change_pwd) return <ChangePassword />
 
-  return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route index element={<Dashboard />} />
-        <Route path="units" element={<Units />} />
-        <Route path="leases" element={<Leases />} />
-        <Route path="energy" element={<Energy />} />
-        <Route path="settings" element={<Settings />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  )
+  const accessKey = `${session.user.id}:${profile.role}:${parks.map((p) => p.id).sort().join(',')}`
+  return <PageCacheProvider key={accessKey}>
+    <Layout><WorkspacePages /></Layout>
+  </PageCacheProvider>
+}
+
+const PAGES = [
+  { path: '/', component: Dashboard }, { path: '/units', component: Units },
+  { path: '/leases', component: Leases }, { path: '/energy', component: Energy },
+  { path: '/settings', component: Settings },
+]
+
+function WorkspacePages() {
+  const { pathname } = useLocation()
+  const path = pathname.replace(/\/$/, '') || '/'
+  return <>
+    {PAGES.map(({ path: route, component: Page }) => <CachedPage key={route} path={route} active={path === route}>
+      <Page />
+    </CachedPage>)}
+    {!PAGES.some((p) => p.path === path) && <Navigate to="/" replace />}
+  </>
 }
 
 export default function App() {
