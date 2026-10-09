@@ -4,6 +4,28 @@ import { useAuth } from '../lib/AuthContext'
 import Modal from '../components/Modal'
 import { area, num } from '../lib/format'
 
+const PARK_DRAFT_KEY = 'gip-new-park-draft'
+
+function readParkDraft() {
+  try {
+    const draft = JSON.parse(sessionStorage.getItem(PARK_DRAFT_KEY) || 'null')
+    return draft?.type === 'new' && draft.form ? draft.form : null
+  } catch {
+    return null
+  }
+}
+
+function clearParkDraft() {
+  try { sessionStorage.removeItem(PARK_DRAFT_KEY) } catch { /* storage may be unavailable */ }
+}
+
+function emptyParkForm() {
+  return {
+    code: '', name: '', city: '', address: '', land_area: '', gfa_above: '', gfa_below: '',
+    parking_count: '', building_count: '', sort_order: 0, is_active: true, remark: '',
+  }
+}
+
 export default function ParksPanel() {
   const { isSuper, reload } = useAuth()
   const [list, setList] = useState([])
@@ -11,7 +33,7 @@ export default function ParksPanel() {
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const [dlg, setDlg] = useState(null)
+  const [dlg, setDlg] = useState(() => readParkDraft() ? { type: 'park', draft: true } : null)
 
   const load = async () => {
     setLoading(true)
@@ -30,8 +52,21 @@ export default function ParksPanel() {
   useEffect(() => { load() }, [])
 
   const done = (m) => {
+    clearParkDraft()
     setMsg(m); setDlg(null); load(); reload()
     setTimeout(() => setMsg(''), 4000)
+  }
+
+  const openNewPark = () => {
+    try {
+      if (!readParkDraft()) sessionStorage.setItem(PARK_DRAFT_KEY, JSON.stringify({ type: 'new', form: {} }))
+    } catch { /* keep the form usable when browser storage is unavailable */ }
+    setDlg({ type: 'park', draft: true })
+  }
+
+  const closeParkDialog = () => {
+    if (!dlg?.row) clearParkDraft()
+    setDlg(null)
   }
 
   return (
@@ -40,7 +75,7 @@ export default function ParksPanel() {
         <div className="card-h">
           <h3>园区与参数</h3>
           {isSuper && (
-            <button className="btn primary" onClick={() => setDlg({ type: 'park' })}>+ 新增园区</button>
+            <button className="btn primary" onClick={openNewPark}>+ 新增园区</button>
           )}
         </div>
 
@@ -91,7 +126,7 @@ export default function ParksPanel() {
       </div>
 
       {dlg?.type === 'park' && (
-        <ParkDialog row={dlg.row} isSuper={isSuper} onClose={() => setDlg(null)}
+        <ParkDialog row={dlg.row} isSuper={isSuper} onClose={closeParkDialog}
                     onDone={() => done('园区资料已保存')} />
       )}
       {dlg?.type === 'set' && (
@@ -113,15 +148,25 @@ function lossLabel(s) {
 
 function ParkDialog({ row, isSuper, onClose, onDone }) {
   const editing = !!row
-  const [f, setF] = useState({
+  const [f, setF] = useState(() => ({
     code: row?.code || '', name: row?.name || '', city: row?.city || '',
     address: row?.address || '',
     land_area: row?.land_area ?? '', gfa_above: row?.gfa_above ?? '', gfa_below: row?.gfa_below ?? '',
     parking_count: row?.parking_count ?? '', building_count: row?.building_count ?? '',
     sort_order: row?.sort_order ?? 0, is_active: row?.is_active ?? true, remark: row?.remark || '',
-  })
+    ...(!row ? (readParkDraft() || {}) : {}),
+  }))
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const updateField = (key, value) => {
+    const next = { ...f, [key]: value }
+    setF(next)
+    if (!editing) {
+      try { sessionStorage.setItem(PARK_DRAFT_KEY, JSON.stringify({ type: 'new', form: next })) }
+      catch { /* keep editing even when browser storage is unavailable */ }
+    }
+  }
 
   const save = async () => {
     setErr('')
@@ -147,6 +192,7 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
       : await sb().from('parks').insert(payload)
     setBusy(false)
     if (error) return setErr(error.message)
+    if (!editing) clearParkDraft()
     onDone()
   }
 
@@ -162,40 +208,40 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
       <div className="frow">
         <div>
           <label className="f">园区代码 *</label>
-          <input value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })}
+          <input value={f.code} onChange={(e) => updateField('code', e.target.value)}
                  placeholder="GC01" disabled={editing && !isSuper} />
         </div>
         <div>
           <label className="f">园区名称 *</label>
-          <input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })}
+          <input value={f.name} onChange={(e) => updateField('name', e.target.value)}
                  placeholder="谷川科技园一期" />
         </div>
         <div>
           <label className="f">城市</label>
-          <input value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} />
+          <input value={f.city} onChange={(e) => updateField('city', e.target.value)} />
         </div>
       </div>
 
       <div className="fgroup mt">
         <label className="f">详细地址</label>
-        <input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
+        <input value={f.address} onChange={(e) => updateField('address', e.target.value)} />
       </div>
 
       <div className="frow">
         <div>
           <label className="f">占地面积 ㎡</label>
           <input type="number" step="0.01" value={f.land_area}
-                 onChange={(e) => setF({ ...f, land_area: e.target.value })} />
+                 onChange={(e) => updateField('land_area', e.target.value)} />
         </div>
         <div>
           <label className="f">地上建筑面积 ㎡</label>
           <input type="number" step="0.01" value={f.gfa_above}
-                 onChange={(e) => setF({ ...f, gfa_above: e.target.value })} />
+                 onChange={(e) => updateField('gfa_above', e.target.value)} />
         </div>
         <div>
           <label className="f">地下建筑面积 ㎡</label>
           <input type="number" step="0.01" value={f.gfa_below}
-                 onChange={(e) => setF({ ...f, gfa_below: e.target.value })} />
+                 onChange={(e) => updateField('gfa_below', e.target.value)} />
         </div>
       </div>
 
@@ -203,25 +249,25 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
         <div>
           <label className="f">车位数</label>
           <input type="number" value={f.parking_count}
-                 onChange={(e) => setF({ ...f, parking_count: e.target.value })} />
+                 onChange={(e) => updateField('parking_count', e.target.value)} />
         </div>
         <div>
           <label className="f">规划栋数</label>
           <input type="number" value={f.building_count}
-                 onChange={(e) => setF({ ...f, building_count: e.target.value })} />
+                 onChange={(e) => updateField('building_count', e.target.value)} />
           <div className="hint">概览优先显示已录入楼栋数</div>
         </div>
         <div>
           <label className="f">排序</label>
           <input type="number" value={f.sort_order}
-                 onChange={(e) => setF({ ...f, sort_order: e.target.value })} />
+                 onChange={(e) => updateField('sort_order', e.target.value)} />
         </div>
       </div>
 
       <div className="row mt">
         <label className="row" style={{ gap: 6, fontSize: 13.5 }}>
           <input type="checkbox" style={{ width: 16 }} checked={f.is_active}
-                 onChange={(e) => setF({ ...f, is_active: e.target.checked })} />
+                 onChange={(e) => updateField('is_active', e.target.checked)} />
           启用（停用后不在概览中显示）
         </label>
       </div>

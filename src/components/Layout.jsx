@@ -43,7 +43,8 @@ export default function Layout() {
 
       <aside className={`sidebar${drawer ? ' open' : ''}`}>
         <div className="logo">
-          {getAppName()}
+          <img className="brand-logo" src="/goaltry-logo.png" alt="谷川高科 GOALTRY" />
+          <span className="brand-title">{getAppName()}</span>
           <small>工业园区管理系统</small>
         </div>
         {nav}
