@@ -150,7 +150,7 @@ function ParkCard({ p }) {
                 sub={
                   <>
                     <div><i style={{ background: '#15925f' }} />已租 {area(p.leased_area)} ㎡</div>
-                    <div><i style={{ background: '#e6eaf1' }} />空置 {area(p.vacant_area)} ㎡</div>
+                    <div><i style={{ background: '#e6eaf1' }} />未出租 {area(p.vacant_area)} ㎡</div>
                   </>
                 }
               />

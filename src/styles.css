@@ -392,17 +392,6 @@ body { background: linear-gradient(135deg, #f5f8fd 0%, #edf4fc 55%, #e9f2fc 100%
   position: relative;
   overflow: hidden;
 }
-.kpi::after {
-  content: '';
-  position: absolute;
-  right: -24px;
-  bottom: -45px;
-  width: 120px;
-  height: 120px;
-  border: 16px solid rgba(46,116,204,.06);
-  border-radius: 50%;
-  pointer-events: none;
-}
 .kpi .lbl { color: #35577f; }
 .kpi .val { color: #0c3564; font-weight: 700; }
 .kpi.good { background: linear-gradient(125deg, #e3f4ff, #cee8f3); }

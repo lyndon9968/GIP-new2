@@ -4,7 +4,7 @@
 
 -- -------------------------------------------------------------
 -- 园区概览
--- 出租率 = 已租面积 / 可出租面积（不含已售、公共）
+-- 出租率 = 已租面积 / 可出租面积（人工录入优先；未录入时按有效出租房源汇总）
 -- 销售率 = 已售面积 / 可销售面积
 -- has_rental / has_sale 用于前端决定是否显示对应饼图
 -- -------------------------------------------------------------
@@ -45,16 +45,16 @@ select
   coalesce(ua.usable_area,0)   as usable_area,
   coalesce(ua.shared_area,0)   as shared_area,
   coalesce(ua.unit_count,0)    as unit_count,
-  coalesce(ua.rentable_area,0) as rentable_area,
+  coalesce(p.rentable_area,ua.rentable_area,0) as rentable_area,
   coalesce(ua.leased_area,0)   as leased_area,
-  coalesce(ua.vacant_area,0)   as vacant_area,
+  greatest(coalesce(p.rentable_area,ua.rentable_area,0) - coalesce(ua.leased_area,0),0) as vacant_area,
   coalesce(ua.saleable_area,0) as saleable_area,
   coalesce(ua.sold_area,0)     as sold_area,
-  case when coalesce(ua.rentable_area,0) > 0
-       then round(ua.leased_area / ua.rentable_area * 100, 2) else null end as occupancy_rate,
+  case when coalesce(p.rentable_area,ua.rentable_area,0) > 0
+       then round(coalesce(ua.leased_area,0) / coalesce(p.rentable_area,ua.rentable_area,0) * 100, 2) else null end as occupancy_rate,
   case when coalesce(ua.saleable_area,0) > 0
        then round(ua.sold_area / ua.saleable_area * 100, 2)  else null end as sale_rate,
-  (coalesce(ua.rentable_area,0) > 0) as has_rental,
+  (coalesce(p.rentable_area,ua.rentable_area,0) > 0) as has_rental,
   (coalesce(ua.saleable_area,0) > 0) as has_sale,
   coalesce(cm.water_amount_month,0) as water_amount_month,
   coalesce(cm.elec_amount_month,0)  as elec_amount_month,

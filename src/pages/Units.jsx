@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { sb } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { ParkPicker } from '../components/Layout'
@@ -32,6 +32,7 @@ export default function Units() {
         sb().from('buildings').select('*').eq('park_id', parkId).order('sort_order').order('code'),
       ])
       if (u.error) throw new Error(u.error.message)
+      if (b.error) throw new Error(b.error.message)
       setRows(u.data || [])
       setBuildings(b.data || [])
       setSel([])
@@ -90,7 +91,8 @@ export default function Units() {
               <>
                 <button className="btn primary" onClick={() => setDlg({ type: 'unit' })}
                         disabled={!buildings.length}>+ 新增房源</button>
-                <button className="btn" onClick={() => setDlg({ type: 'building' })}>+ 新增楼栋</button>
+                <button className="btn" onClick={() => setDlg({ type: 'building' })}
+                        disabled={!parkId || loading}>+ 新增楼栋</button>
               </>
             )}
             {can.mergeSplit && (
@@ -128,7 +130,8 @@ export default function Units() {
       </div>
 
       {dlg?.type === 'building' && (
-        <BuildingDialog parkId={parkId} onClose={() => setDlg(null)} onDone={() => done('楼栋已保存')} />
+        <BuildingDialog parkId={parkId} buildings={buildings} onRefresh={load}
+                        onClose={() => setDlg(null)} onDone={() => done('楼栋已保存')} />
       )}
       {dlg?.type === 'unit' && (
         <UnitDialog parkId={parkId} buildings={buildings} row={dlg.payload}
@@ -204,25 +207,44 @@ function UnitTable({ rows, sel, setSel, canSelect, canEdit, onEdit, onDelete }) 
   )
 }
 
-function BuildingDialog({ parkId, onClose, onDone }) {
+function BuildingDialog({ parkId, buildings, onRefresh, onClose, onDone }) {
   const [f, setF] = useState({ code: '', name: '', floors_above: 1, floors_below: 0, gfa: '' })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
+
+  const duplicateMessage = (code) => `该园区已存在“${code}”栋，不能重复新增。若要为该楼栋添加房源，请关闭此窗口，在“新增房源”中选择“${code}”栋；若是另一栋楼，请使用不同栋号。`
 
   const save = async () => {
-    if (!f.code.trim()) return setErr('栋号必填')
+    if (submitting.current) return
+    const code = f.code.trim()
+    if (!parkId) return setErr('请先选择园区')
+    if (!code) return setErr('栋号必填')
+    if (buildings.some((b) => b.code === code)) return setErr(duplicateMessage(code))
+    submitting.current = true
     setBusy(true); setErr('')
-    const { error } = await sb().from('buildings').insert({
-      park_id: parkId,
-      code: f.code.trim(),
-      name: f.name.trim() || null,
-      floors_above: Number(f.floors_above) || 1,
-      floors_below: Number(f.floors_below) || 0,
-      gfa: Number(f.gfa) || 0,
-    })
-    setBusy(false)
-    if (error) return setErr(error.message)
-    onDone()
+    try {
+      const { error } = await sb().from('buildings').insert({
+        park_id: parkId,
+        code,
+        name: f.name.trim() || null,
+        floors_above: Number(f.floors_above) || 1,
+        floors_below: Number(f.floors_below) || 0,
+        gfa: Number(f.gfa) || 0,
+      })
+      if (error?.code === '23505') {
+        setErr(duplicateMessage(code))
+        await onRefresh()
+        return
+      }
+      if (error) throw new Error(error.message)
+      onDone()
+    } catch (ex) {
+      setErr(`新增楼栋失败：${ex.message}`)
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
   }
 
   return (
@@ -234,8 +256,10 @@ function BuildingDialog({ parkId, onClose, onDone }) {
     }>
       <div className="frow">
         <div>
-          <label className="f">栋号 *</label>
-          <input value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="A1" />
+          <label className="f" htmlFor="building-code">栋号 *</label>
+          <input id="building-code" value={f.code} onChange={(e) => {
+            setF({ ...f, code: e.target.value }); setErr('')
+          }} placeholder="A1" />
           <div className="hint">房号将以此为前缀，如 A1 + 03层 + 05号 = A10305</div>
         </div>
         <div>
@@ -260,6 +284,9 @@ function BuildingDialog({ parkId, onClose, onDone }) {
                  onChange={(e) => setF({ ...f, gfa: e.target.value })} />
         </div>
       </div>
+      {buildings.length > 0 && (
+        <div className="hint mt">该园区已有楼栋：{buildings.map((b) => b.name ? `${b.code}（${b.name}）` : b.code).join('、')}。栋号不能重复。</div>
+      )}
       {err ? <div className="err">{err}</div> : null}
     </Modal>
   )

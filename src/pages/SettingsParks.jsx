@@ -22,6 +22,7 @@ function clearParkDraft() {
 function emptyParkForm() {
   return {
     code: '', name: '', city: '', address: '', land_area: '', gfa_above: '', gfa_below: '',
+    rentable_area: '',
     parking_count: '', building_count: '', sort_order: 0, is_active: true, remark: '',
   }
 }
@@ -91,6 +92,7 @@ export default function ParksPanel() {
                 <tr>
                   <th>代码</th><th>名称</th><th>城市</th>
                   <th className="num">占地 ㎡</th><th className="num">地上 ㎡</th><th className="num">地下 ㎡</th>
+                  <th className="num">可出租 ㎡</th>
                   <th className="num">车位</th><th className="num">水价</th><th className="num">电价</th>
                   <th>损耗分摊</th><th style={{ width: 140 }}>操作</th>
                 </tr>
@@ -106,6 +108,7 @@ export default function ParksPanel() {
                       <td className="num">{area(p.land_area)}</td>
                       <td className="num">{area(p.gfa_above)}</td>
                       <td className="num">{area(p.gfa_below)}</td>
+                      <td className="num">{p.rentable_area == null ? '按房源汇总' : area(p.rentable_area)}</td>
                       <td className="num">{num(p.parking_count)}</td>
                       <td className="num">{Number(s.water_price || 0).toFixed(2)}</td>
                       <td className="num">{Number(s.electricity_price || 0).toFixed(2)}</td>
@@ -152,6 +155,7 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
     code: row?.code || '', name: row?.name || '', city: row?.city || '',
     address: row?.address || '',
     land_area: row?.land_area ?? '', gfa_above: row?.gfa_above ?? '', gfa_below: row?.gfa_below ?? '',
+    rentable_area: row?.rentable_area ?? '',
     parking_count: row?.parking_count ?? '', building_count: row?.building_count ?? '',
     sort_order: row?.sort_order ?? 0, is_active: row?.is_active ?? true, remark: row?.remark || '',
     ...(!row ? (readParkDraft() || {}) : {}),
@@ -172,6 +176,10 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
     setErr('')
     if (!f.code.trim()) return setErr('园区代码必填')
     if (!f.name.trim()) return setErr('园区名称必填')
+    const rentableArea = f.rentable_area === '' ? null : Number(f.rentable_area)
+    if (rentableArea !== null && (!Number.isFinite(rentableArea) || rentableArea < 0)) {
+      return setErr('可出租面积必须是大于或等于 0 的数字')
+    }
 
     const payload = {
       code: f.code.trim(), name: f.name.trim(),
@@ -179,6 +187,7 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
       land_area: Number(f.land_area) || 0,
       gfa_above: Number(f.gfa_above) || 0,
       gfa_below: Number(f.gfa_below) || 0,
+      rentable_area: rentableArea,
       parking_count: Number(f.parking_count) || 0,
       building_count: Number(f.building_count) || 0,
       sort_order: Number(f.sort_order) || 0,
@@ -242,6 +251,16 @@ function ParkDialog({ row, isSuper, onClose, onDone }) {
           <label className="f">地下建筑面积 ㎡</label>
           <input type="number" step="0.01" value={f.gfa_below}
                  onChange={(e) => updateField('gfa_below', e.target.value)} />
+        </div>
+      </div>
+
+      <div className="frow mt">
+        <div>
+          <label className="f" htmlFor="park-rentable-area">可出租面积 ㎡</label>
+          <input id="park-rentable-area" type="number" min="0" step="0.01" value={f.rentable_area}
+                 onChange={(e) => updateField('rentable_area', e.target.value)}
+                 placeholder="输入园区可出租总面积" />
+          <div className="hint">概览和出租率优先使用此面积；留空时按房源汇总</div>
         </div>
       </div>
 

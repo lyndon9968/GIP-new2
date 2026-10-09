@@ -62,6 +62,7 @@ create table if not exists public.parks (
   building_count    int          not null default 0,   -- 栋数（可由 buildings 自动汇总，此处为规划值）
   gfa_above         numeric(14,2) not null default 0,  -- 地上建筑面积 ㎡
   gfa_below         numeric(14,2) not null default 0,  -- 地下建筑面积 ㎡
+  rentable_area     numeric(14,2) constraint parks_rentable_area_nonnegative check (rentable_area >= 0), -- 人工录入；NULL 按房源汇总
   parking_count     int          not null default 0,   -- 车位数
   is_active         boolean      not null default true,
   sort_order        int          not null default 0,
@@ -70,6 +71,7 @@ create table if not exists public.parks (
   updated_at        timestamptz  not null default now()
 );
 comment on column public.parks.gfa_above is '地上建筑面积；总建筑面积 = gfa_above + gfa_below';
+comment on column public.parks.rentable_area is '人工录入的可出租面积（㎡）；NULL 按有效可出租房源汇总，0 表示无出租物业';
 
 create trigger trg_parks_updated before update on public.parks
   for each row execute function public.tg_set_updated_at();
