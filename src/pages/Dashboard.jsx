@@ -125,7 +125,7 @@ function ExpectedIncome({ rows }) {
 
 function ParkCard({ p }) {
   return (
-    <div className="card">
+    <div className="card park-overview-card">
       <div className="card-h">
         <h3>{p.name}</h3>
         <span className="tag">{p.code}</span>

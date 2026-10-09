@@ -1,6 +1,6 @@
 :root {
   --bg: #f4f6fa;
-  --card: #ffffff;
+  --card: #eaf3ff;
   --ink: #1a2233;
   --ink-2: #5b6577;
   --ink-3: #8b95a7;
@@ -331,10 +331,10 @@ table.tbl tr.st-voided  { color: #a0a6b0; }
 /* ---------- 谷川高科 · 科技蓝视觉 ---------- */
 :root {
   --bg: #eef4fb;
-  --card: #ffffff;
+  --card: #eaf3ff;
   --ink: #102544;
   --ink-2: #526985;
-  --ink-3: #7c91aa;
+  --ink-3: #587394;
   --line: #dce7f5;
   --brand: #1454b8;
   --brand-2: #1684e5;
@@ -354,8 +354,11 @@ body { background: linear-gradient(135deg, #f5f8fd 0%, #edf4fc 55%, #e9f2fc 100%
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 7px;
-  box-shadow: 0 5px 16px rgba(0,0,0,.16);
+  padding: 9px 6px;
+  background: linear-gradient(135deg, #ffffff, #e9f3ff);
+  border: 1px solid #c8dff8;
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.18);
 }
 .sidebar .brand-title { display: none; }
 .sidebar .logo small { margin-top: 10px; color: #afc7e4; font-size: 12px; letter-spacing: .06em; }
@@ -367,18 +370,55 @@ body { background: linear-gradient(135deg, #f5f8fd 0%, #edf4fc 55%, #e9f2fc 100%
 }
 .sidebar nav a .ico { color: #71bfff; }
 .topbar {
+  background: linear-gradient(100deg, #edf5ff, #dfedfc);
   border-bottom-color: #d9e7f7;
   box-shadow: 0 4px 18px rgba(20, 68, 125, .035);
 }
 .topbar h1 { color: #123660; letter-spacing: .01em; }
 .content { background: radial-gradient(ellipse at 100% 0%, rgba(91,169,245,.075), transparent 38%); }
 .card, .kpi, .lease-card {
-  border-color: #dce8f6;
+  background: linear-gradient(145deg, #edf5ff 0%, #dceafc 100%);
+  border-color: #bdd4ef;
   box-shadow: var(--shadow);
 }
-.card > .card-h { background: linear-gradient(100deg, #fff, #f9fbff); }
+.card > .card-h {
+  background: linear-gradient(110deg, #dcecff, #c9dff9);
+  border-bottom-color: #b9d3f0;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
 .card > .card-h h3 { color: #123660; }
+.kpi {
+  background: linear-gradient(125deg, #e7f2ff 0%, #cce1fc 100%);
+  position: relative;
+  overflow: hidden;
+}
+.kpi::after {
+  content: '';
+  position: absolute;
+  right: -24px;
+  bottom: -45px;
+  width: 120px;
+  height: 120px;
+  border: 16px solid rgba(46,116,204,.06);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.kpi .lbl { color: #35577f; }
+.kpi .val { color: #0c3564; font-weight: 700; }
+.kpi.good { background: linear-gradient(125deg, #e3f4ff, #cee8f3); }
+.kpi.alert { background: linear-gradient(125deg, #fff0f0, #f9dddd); }
+.kpi.alert .val { color: var(--danger); }
 .kpi.accent { border-left-color: #1684e5; }
+.park-overview-card { overflow: hidden; }
+.park-overview-card > .card-h {
+  background: linear-gradient(110deg, #1453a5, #1578cc);
+  border-bottom-color: #145faf;
+}
+.park-overview-card > .card-h h3 { color: #fff; }
+.park-overview-card > .card-h .hint { color: #dfedff; }
+.park-overview-card > .card-h .tag { background: #e1eeff; color: #124a87; }
+.park-overview-card .fee-row { background: #d5e6fc; border: 1px solid #bcd6f3; }
+.lease-card:not(.lv3) .lc-h { background: linear-gradient(110deg, #dcecff, #c9dff9); }
 .btn.primary {
   background: linear-gradient(135deg, #1768cf, #1350aa);
   border-color: #1558b6;
