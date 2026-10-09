@@ -37,23 +37,33 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let alive = true
+    let pendingTimer
+    let authEventId = 0
 
-    sb().auth.getSession().then(async ({ data }) => {
+    const { data: sub } = sb().auth.onAuthStateChange((_evt, s) => {
       if (!alive) return
-      setSession(data?.session || null)
-      await loadProfile(data?.session?.user?.id)
-      if (alive) setLoading(false)
-    })
-
-    const { data: sub } = sb().auth.onAuthStateChange(async (_evt, s) => {
-      if (!alive) return
+      const eventId = ++authEventId
+      window.clearTimeout(pendingTimer)
       setSession(s)
-      await loadProfile(s?.user?.id)
-      setLoading(false)
+      setLoading(true)
+
+      // Do not call Supabase again inside onAuthStateChange. Auth callbacks run
+      // under the auth lock; defer profile queries until this callback returns.
+      pendingTimer = window.setTimeout(() => {
+        loadProfile(s?.user?.id)
+          .catch(() => {
+            setProfile(null)
+            setParks([])
+          })
+          .finally(() => {
+            if (alive && eventId === authEventId) setLoading(false)
+          })
+      }, 0)
     })
 
     return () => {
       alive = false
+      window.clearTimeout(pendingTimer)
       sub?.subscription?.unsubscribe()
     }
   }, [loadProfile])
