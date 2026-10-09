@@ -170,7 +170,7 @@ function UnitTable({ rows, sel, setSel, canSelect, canEdit, onEdit, onDelete }) 
           <th>栋号</th><th>层</th><th>房号</th>
           <th className="num">建筑面积</th><th className="num">使用面积</th><th className="num">公摊面积</th>
           <th>属性</th><th>状态</th><th>租户 / 业主</th><th>逾期</th>
-          {canEdit ? <th style={{ width: 100 }}>操作</th> : null}
+          {canEdit ? <th style={{ minWidth: 140 }}>操作</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -201,9 +201,8 @@ function UnitTable({ rows, sel, setSel, canSelect, canEdit, onEdit, onDelete }) 
               <td>
                 <div className="row" style={{ gap: 5 }}>
                   <button className="btn sm" onClick={() => onEdit(r)}>编辑</button>
-                  {r.display_status === 'vacant' && (
-                    <button className="btn sm danger" onClick={() => onDelete(r)}>删除</button>
-                  )}
+                  <button className="btn sm danger" onClick={() => onDelete(r)}
+                          aria-label={`删除房源 ${r.unit_no}`}>删除</button>
                 </div>
               </td>
             ) : null}
@@ -725,24 +724,44 @@ function SplitDialog({ row, onClose, onDone }) {
 function DeleteUnit({ row, onClose, onDone }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const submitting = useRef(false)
 
   const run = async () => {
+    if (submitting.current) return
+    submitting.current = true
     setBusy(true); setErr('')
-    const { error } = await sb().from('units').delete().eq('id', row.id)
-    setBusy(false)
-    if (error) return setErr(`删除失败：${error.message}`)
-    onDone()
+    try {
+      const { data, error } = await sb().rpc('delete_unit', { p_unit_id: row.id })
+      if (error) {
+        if (['PGRST202', '42883'].includes(error.code)) {
+          throw new Error('数据库尚未升级删除功能，请管理员先运行 16_safe_unit_delete.sql，再刷新重试。')
+        }
+        if (error.code === '23503' && !/不能删除/.test(error.message)) {
+          throw new Error('该房源有关联业务记录，不能删除。请先核对租约及历史记录。')
+        }
+        throw new Error(error.message)
+      }
+      if (data !== row.id) throw new Error('删除结果未确认，请刷新列表核对后重试。')
+      onDone()
+    } catch (ex) {
+      setErr(`删除失败：${ex.message}`)
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
   }
 
   return (
     <ConfirmDialog
-      title="删除房源" danger busy={busy} onClose={onClose} onConfirm={run}
+      title="删除房源" danger busy={busy} onClose={() => { if (!busy) onClose() }} onConfirm={run}
       message={
         <>
           确定删除房源 <strong>{row.unit_no}</strong>（{area(row.area)} ㎡）？
+          <div className="hint mt">位置：{unitLocationLabel(row)} · 状态：{STATUS_LABEL[row.display_status]}</div>
           <div className="hint mt">
-            删除后不可恢复。若该房源已有租约或抄表记录，数据库会拒绝删除，
-            这种情况请改用合并或拆分以保留台账。
+            删除只针对这一房源，不会删除楼栋或其他房源，删除后无法在界面恢复。
+            无关联记录的测试或误录房源，即使标为“已租”也可以删除。
+            已关联租约、水电表、合并拆分台账或凭证的房源不能直接删除，以保留历史记录。
           </div>
           {err ? <div className="err">{err}</div> : null}
         </>
